@@ -137,6 +137,13 @@ func NewContainer(ctx context.Context, platform stdio.Platform, r *task.CreateTa
 		processes:       make(map[string]process.Process),
 		reservedProcess: make(map[string]struct{}),
 	}
+
+	// Judge /etc/mtab is soft link or not.
+	judgeErr := JudgeMtab(r.Bundle)
+	if judgeErr != nil {
+		logrus.WithError(err).Warn("judge /etc/mtab file in rootfs err")
+	}
+
 	pid := p.Pid()
 	if pid > 0 {
 		var cg interface{}
@@ -162,6 +169,40 @@ func NewContainer(ctx context.Context, platform stdio.Platform, r *task.CreateTa
 }
 
 const optionsFilename = "options.json"
+
+func JudgeMtab(bundlePath string) error {
+	targetPath := bundlePath + "/rootfs/etc/mtab"
+	linkTarget := bundlePath + "/rootfs/proc/mounts"
+
+	// check etc/mtab is softlink or not
+	info, err := os.Lstat(targetPath)
+	if err != nil {
+		logrus.WithError(err).Errorf("check file status err")
+		return err
+	}
+
+	// Alrealy is a softlink, do nothing
+	if info.Mode()&os.ModeSymlink != 0 {
+		logrus.WithError(err).Errorf("etc/mtab alrealy is a softlink, do nothing")
+		return nil
+	}
+
+	// Not a softlink, remove the filepath.
+	err = os.Remove(targetPath)
+	if err != nil {
+		logrus.WithError(err).Errorf("Remove original filepath err")
+		return err
+	}
+
+	// Create soft link
+	cmd := exec.Command("ln", "-s", linkTarget, targetPath)
+	err = cmd.Run()
+	if err != nil {
+		logrus.WithError(err).Errorf("create soft link err")
+		return err
+	}
+	return nil
+}
 
 // ReadOptions reads the option information from the path.
 // When the file does not exist, ReadOptions returns nil without an error.
